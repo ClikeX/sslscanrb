@@ -1,0 +1,52 @@
+#!/usr/bin/env ruby
+
+require "bundler/setup"
+require "thor"
+require 'sslscanrb'
+require 'csv'
+require 'ssllabs'
+require 'pp'
+require 'ruby-progressbar'
+require 'colorize'
+
+class CLI < Thor
+  include Thor::Actions
+
+  desc "scan FILE", "Scans a FILE (absolute path)"
+  def scan(file)
+
+    api = Ssllabs::Api.new
+
+    parsed_list = []
+    CSV.foreach(file) do |row|
+      parsed_list << Sslscanrb.parse(row.first)
+    end
+
+    progressbar = ProgressBar.create(length: parsed_list.count, format: '%w - %c/%C')
+    parsed_list.each do |url|
+      r = api.analyse(host: url,
+                      fromCache: 'on',
+                      maxAge: 48)
+      json =  JSON.parse(r.to_json)
+      if json['endpoints']
+        json['endpoints'].each do |endpoint|
+          if endpoint['grade']
+            progressbar.log "#{json['host']}: #{endpoint['grade'].colorize(:green)}"
+          else
+            progressbar.log "#{json['host']}: #{endpoint['statusMessage'].colorize(:yellow)}"
+          end
+        end
+      elsif api.current_assessments != api.max_assessments
+        api.analyse(host: url,
+                        startNew: 'on', all: 'done')
+        sleep 5 # Sleep for 5 seconds to reduce strain on the API
+      else
+        progressbar.log "#{url} #{"Cannot assess".colorize(:red)}"
+      end
+      progressbar.increment
+    end
+  end
+
+end
+
+CLI.start(ARGV)
